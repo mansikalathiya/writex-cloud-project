@@ -69,7 +69,8 @@ The architecture of WriteX adheres to the AWS Well-Architected Framework, ensuri
 ---
 
 ## Screenshots
-
+Aws Architecture
+![Aws Architecture](Aws-Architecture.png)
 
 
 
