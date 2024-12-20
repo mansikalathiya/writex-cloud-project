@@ -40,14 +40,6 @@ The architecture of WriteX adheres to the AWS Well-Architected Framework, ensuri
 
 ---
 
-## Deployment
-
-The application is deployed on AWS and can be accessed using the following URL:
-**[WriteX Application](http://ec2-3-87-152-24.compute-1.amazonaws.com/)**  
-*Note: The URL may change as the EC2 instance restarts.*
-
----
-
 ## AWS Well-Architected Principles
 
 ### Security
@@ -78,13 +70,6 @@ The application is deployed on AWS and can be accessed using the following URL:
 
 ## Screenshots
 
-### 1. Sign-Up Page
-![Sign-Up Page](https://path/to/screenshot)
 
-### 2. Login Page
-![Login Page](https://path/to/screenshot)
-
-### 3. Resume Editor
-![Editor Page](https://path/to/screenshot)
 
 
