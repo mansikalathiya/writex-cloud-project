@@ -1,0 +1,613 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: VPC with Public and Private Subnets, Load Balancer, and EC2 Instances
+
+Parameters:
+  VpcCIDR:
+    Description: CIDR Block for VPC
+    Type: String
+    Default: 10.0.0.0/16
+
+  PublicSubnetCIDR:
+    Description: CIDR Block for Public Subnet
+    Type: String
+    Default: 10.0.1.0/24
+
+  PrivateSubnetCIDR:
+    Description: CIDR Block for Private Subnet
+    Type: String
+    Default: 10.0.2.0/24
+
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: KeyName
+
+Resources:
+  # VPC Configuration
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: MyVPC
+
+  # Internet Gateway
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: MyInternetGateway
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # Public Subnet
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PublicSubnetCIDR
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: PublicSubnet1
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.3.0/24  # Different CIDR for second public subnet
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: PublicSubnet2
+
+  # Private Subnet
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivateSubnetCIDR
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: PrivateSubnet1
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.4.0/24  # Different CIDR for second private subnet
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: PrivateSubnet2
+
+  # Elastic IP for NAT Gateway
+  NatEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  # NAT Gateway
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatEIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+
+  # Public Route Table
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: PublicRouteTable
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  # Private Route Table
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: PrivateRouteTable
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+
+  # Application Load Balancer
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP traffic from anywhere
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: LoadBalancerSecurityGroup
+
+  BackendALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: BEALB
+      Scheme: internet-facing
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      SecurityGroups:
+        - !Ref LoadBalancerSecurityGroup
+      Tags:
+        - Key: Name
+          Value: BEALB
+
+  BackendTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: BEALBTargetGroup
+      TargetType: instance
+      Protocol: HTTP
+      Port: 8080
+      VpcId: !Ref VPC
+      HealthCheckProtocol: HTTP
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 3
+      UnhealthyThresholdCount: 2
+      Tags:
+        - Key: Name
+          Value: BEALBTargetGroup
+
+  BackendListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref BackendALB
+      Protocol: HTTP
+      Port: 80
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref BackendTargetGroup
+
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for RDS PostgreSQL
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref BackendSecurityGroup
+
+  # RDS Resources
+  RDSSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for RDS instances
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Sub "${AWS::StackName}-writex-rds"
+      AllocatedStorage: 20
+      DBInstanceClass: db.t3.micro
+      Engine: postgres
+      EngineVersion: '17.2'
+      MasterUsername: postgres
+      MasterUserPassword: 12345678
+      VPCSecurityGroups:
+        - !GetAtt RDSSecurityGroup.GroupId
+      DBSubnetGroupName: !Ref RDSSubnetGroup
+      PubliclyAccessible: false
+      DBName: writex
+      BackupRetentionPeriod: 7
+      DeletionProtection: true
+      StorageEncrypted: true
+      MultiAZ: true
+      AutoMinorVersionUpgrade: true
+      CopyTagsToSnapshot: true
+      MonitoringInterval: 0
+      EnablePerformanceInsights: true
+      PerformanceInsightsRetentionPeriod: 7
+      PreferredBackupWindow: "03:00-04:00"
+      PreferredMaintenanceWindow: "Mon:04:00-Mon:05:00"
+
+
+
+
+  # Lambda Function
+# S3 Bucket
+# -------------------------------------------------------------S3----------------------------------------------------------------
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: b00979173
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - '*'
+            AllowedMethods:
+              - GET
+              - PUT
+              - POST
+              - DELETE
+            AllowedOrigins:
+              - '*'
+            ExposedHeaders:
+              - 'ETag'
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldFiles
+            Status: Enabled
+            ExpirationInDays: 30
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        IgnorePublicAcls: false
+        BlockPublicPolicy: false
+        RestrictPublicBuckets: false
+
+  S3BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3Bucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: PublicRead
+            Effect: Allow
+            Principal: "*"
+            Action:
+              - "s3:GetObject"
+              - "s3:GetObjectVersion"
+            Resource: !Sub "arn:aws:s3:::${S3Bucket}/*"
+# -------------------------------------------------------------------------------------------------------------------------------
+
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-lambda"
+      Handler: index.handler
+      Role: arn:aws:iam::017664566869:role/LabRole  # Replace this with the LabRole ARN
+      Code:
+        S3Bucket: b00979173-mansi
+        S3Key: lambda.zip
+      Runtime: nodejs18.x
+      Timeout: 30
+      Environment:
+        Variables:
+          BUCKET_NAME: b00979173-mansi
+
+      
+
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*"
+
+
+
+  # API Gateway Configuration
+  ApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub "${AWS::StackName}-api"
+      Description: API Gateway for Lambda function
+      FailOnWarnings: true
+
+  ApiGatewayResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: lambda
+      RestApiId: !Ref ApiGateway
+
+  ApiGatewayMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: POST
+      ResourceId: !Ref ApiGatewayResource
+      RestApiId: !Ref ApiGateway
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: !Sub
+          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFunction.Arn}/invocations
+          - { LambdaFunction: !Ref LambdaFunction }
+      MethodResponses:
+        - StatusCode: 200
+
+  ApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    Properties:
+      RestApiId: !Ref ApiGateway
+      StageName: prod
+    DependsOn: ApiGatewayMethod
+
+# LambdaInvokePermission:
+#   Type: AWS::Lambda::Permission
+#   Properties:
+#     Action: lambda:InvokeFunction
+#     FunctionName: !Ref LambdaFunction
+#     Principal: apigateway.amazonaws.com
+#     SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/POST/lambda"
+
+        
+  BackendSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for backend instance
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+
+  # Launch Template for Backend
+  BackendLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${AWS::StackName}-BackendLaunchTemplate"
+      LaunchTemplateData:
+        ImageId: ami-0453ec754f44f9a4a
+        InstanceType: t2.small
+        SecurityGroupIds:
+          - !Ref BackendSecurityGroup
+        KeyName: !Ref KeyName
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            sudo su
+            sudo dnf update -y
+            sudo yum update -y
+            sudo yum install -y texlive texlive-latex texlive-xetex
+            # Verify LaTeX installation
+            pdflatex --version
+            sudo dnf install -y docker
+            sudo systemctl start docker
+            sudo systemctl enable docker
+            # Create .env file for backend
+            echo "DATABASE_URL=postgresql://postgres:12345678@${RDSInstance.Endpoint.Address}:5432/writex" >> .env
+            echo "LAMBDA_URL=https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/lambda" >> .env
+            # Pull and run backend container
+            docker pull sneh212/backend
+            docker run --env-file .env -d -p 8080:8080 sneh212/backend
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: BackendInstance
+
+  # Auto Scaling Group for Backend
+  BackendASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub "${AWS::StackName}-BackendASG"
+      VPCZoneIdentifier:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      LaunchTemplate:
+        LaunchTemplateId: !Ref BackendLaunchTemplate
+        Version: !GetAtt BackendLaunchTemplate.LatestVersionNumber
+      MinSize: 1
+      MaxSize: 2
+      DesiredCapacity: 1
+      TargetGroupARNs:
+        - !Ref BackendTargetGroup
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-Backend"
+          PropagateAtLaunch: true
+
+  # Frontend Security Group
+  FrontendSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Frontend EC2
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: FrontendSecurityGroup
+
+  FrontendInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.small
+      SecurityGroupIds:
+        - !Ref FrontendSecurityGroup
+      SubnetId: !Ref PublicSubnet1
+      ImageId: ami-0453ec754f44f9a4a
+      KeyName: !Ref KeyName
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          sudo su
+          sudo dnf update -y
+          sudo dnf install -y docker
+          sudo systemctl start docker
+          sudo systemctl enable docker
+          
+          # Create .env file for frontend
+          echo "REACT_APP_API_URL=http://${BackendALB.DNSName}" >> .env
+          
+          # Pull and run frontend container
+          docker pull sneh212/frontend
+          docker run --env-file .env -d -p 8080:8080 sneh212/frontend
+      Tags:
+        - Key: Name
+          Value: FrontendInstance
+
+  # Add CPU-based scaling policies
+  BackendScaleUpPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref BackendASG
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: 50
+
+  # Add CloudWatch Alarms
+  HighCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Scale up if CPU > 70% for 5 minutes
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 70
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions: [!Ref BackendScaleUpPolicy]
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref BackendASG
+
+  # AWS Backup Configuration
+  # BackupVault:
+  #   Type: AWS::Backup::BackupVault
+  #   Properties:
+  #     BackupVaultName: !Sub "${AWS::StackName}-backup-vault"
+  #     Tags:
+  #       - Key: Name
+  #         Value: RDSBackupVault
+
+  # BackupPlan:
+  #   Type: AWS::Backup::BackupPlan
+  #   Properties:
+  #     BackupPlan:
+  #       BackupPlanName: !Sub "${AWS::StackName}-backup-plan"
+  #       BackupPlanRule:
+  #         - RuleName: DailyBackups
+  #           TargetBackupVault: !Ref BackupVault
+  #           ScheduleExpression: "cron(0 5 ? * * *)" # Daily backup at 5 AM UTC
+  #           StartWindowMinutes: 60
+  #           CompletionWindowMinutes: 120
+  #           Lifecycle:
+  #             DeleteAfterDays: 30
+  #       Tags:
+  #         - Key: Name
+  #           Value: RDSBackupPlan
+
+  # BackupSelection:
+  #   Type: AWS::Backup::BackupSelection
+  #   Properties:
+  #     BackupPlanId: !Ref BackupPlan
+  #     BackupSelection:
+  #       SelectionName: RDSBackupSelection
+  #       IamRoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/service-role/AWSBackupDefaultServiceRole"
+  #       Resources:
+  #         - !Sub "arn:aws:rds:${AWS::Region}:${AWS::AccountId}:db:${RDSInstance}"
+  #       Tags:
+  #         - ConditionType: STRINGEQUALS
+  #           ConditionKey: backup
+  #           ConditionValue: true
+
+Outputs:
+  VPCId:
+    Description: VPC ID
+    Value: !Ref VPC
+
+  BackendALBDNS:
+    Description: Backend Application Load Balancer DNS Name
+    Value: !GetAtt BackendALB.DNSName
+
+  FrontendInstancePublicIP:
+    Description: Frontend Instance Public IP
+    Value: !GetAtt FrontendInstance.PublicIp
